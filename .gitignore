@@ -4,8 +4,9 @@ outputs/
 *.bin
 *.safetensors
 
-# data (push processed only if small enough)
-data/raw/
+# data (exclude large/private raw files, but track seed examples)
+data/raw/*.jsonl.private
+data/raw/synthetic_*/
 
 # python
 __pycache__/
