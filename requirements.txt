@@ -9,5 +9,11 @@ torch
 evaluate
 rouge_score
 gradio
-ollama
 jupyterlab
+google-genai
+python-dotenv
+scikit-learn
+requests
+beautifulsoup4
+pandas
+huggingface_hub

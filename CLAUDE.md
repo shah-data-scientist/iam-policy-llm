@@ -15,15 +15,32 @@ modern ML engineering (QLoRA, instruction tuning, LLM evaluation).
 
 ## Current Status
 
-Phase 1 — Dataset Construction (in progress)
+Phase 1 — Dataset Construction (COMPLETE ✓)
 
 - [x] Project scaffold created (notebooks, src, data dirs)
 - [x] 20 seed examples in `data/raw/seed_examples.jsonl`
-- [ ] Scale to ~500 examples via GPT-4 synthetic generation (notebook 01)
-- [ ] Train/test split → `data/processed/train.jsonl` + `data/processed/test.jsonl`
-- [ ] QLoRA training on Google Colab (notebook 02)
-- [ ] Evaluation framework (notebook 03)
-- [ ] Gradio demo + HuggingFace Spaces deploy (notebook 04)
+- [x] Notebook 01 updated: google-genai SDK, gemini-flash-lite-latest
+- [x] `src/build_dataset.py` — CLI pipeline (more reliable than nbconvert)
+- [x] `data/raw/synthetic_batch_01.jsonl` — 450 Gemini synthetic examples
+- [x] `data/raw/scraped_aws_docs.jsonl` — 32 real AWS doc examples
+- [x] `data/processed/train.jsonl` — 451 examples (90%)
+- [x] `data/processed/test.jsonl` — 51 examples (10%)
+
+Phase 2 — Training (COMPLETE ✓)
+
+- [x] Notebook 02 updated: Colab data upload + HuggingFace Hub push
+- [x] Trained on Colab T4 — 451 examples, 3 epochs, 171 steps, loss 0.617, ~8 min
+- [x] `iam-policy-adapter/` saved locally (LoRA weights ~50 MB)
+
+Phase 3 — Evaluation & Deploy (COMPLETE ✓)
+
+- [x] Notebook 03 run on Colab — eval_results.json saved
+  - JSON validity: 78.4% → 96.1%
+  - NIST recall: 0.0% → 53.3%
+  - ROUGE-L: 0.326 → 0.589
+- [x] Notebook 04 run on Colab — inference demo working, Gradio UI tested
+- [x] README.md, model_card.md updated with real results
+- [ ] Deploy `app.py` to HuggingFace Spaces (optional)
 
 ## Project Structure
 
@@ -87,9 +104,13 @@ Key hyperparameters (in notebook 02 and src/train.py):
 
 ## Immediate Next Step
 
-Run `notebooks/01_dataset_build.ipynb` to expand seed examples to ~500 using GPT-4.
-Requires `OPENAI_API_KEY` environment variable. Review synthetic outputs manually
-before saving to `data/raw/synthetic_batch_01.jsonl`, then run the merge + split cells.
+Project is functionally complete. Optional remaining step:
+deploy `app.py` to HuggingFace Spaces for a public demo link.
+
+To regenerate the dataset from scratch:
+```bash
+python src/build_dataset.py
+```
 
 ## Stack
 

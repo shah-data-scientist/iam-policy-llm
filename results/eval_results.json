@@ -1,0 +1,14 @@
+{
+  "base": {
+    "json_validity": 0.7843137254901961,
+    "least_privilege": 0.7843137254901961,
+    "nist_recall": 0.0,
+    "rouge_l": 0.32578941853339327
+  },
+  "finetuned": {
+    "json_validity": 0.9607843137254902,
+    "least_privilege": 0.21568627450980393,
+    "nist_recall": 0.5326797385620915,
+    "rouge_l": 0.5891755212664052
+  }
+}

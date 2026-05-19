@@ -4,9 +4,9 @@ outputs/
 *.bin
 *.safetensors
 
-# data (exclude large/private raw files, but track seed examples)
-data/raw/*.jsonl.private
-data/raw/synthetic_*/
+# generated data (reproducible via src/build_dataset.py)
+data/raw/synthetic_*.jsonl
+data/raw/scraped_*.jsonl
 
 # python
 __pycache__/

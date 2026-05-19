@@ -13,11 +13,16 @@ from data_utils import load_jsonl, format_prompt
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="data/processed/train.jsonl")
-    parser.add_argument("--output", default="outputs/")
-    parser.add_argument("--model", default="unsloth/llama-3.2-3b-instruct")
-    parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--rank", type=int, default=16)
+    parser.add_argument("--data",       default="data/processed/train.jsonl")
+    parser.add_argument("--output",     default="outputs/")
+    parser.add_argument("--adapter",    default="iam-policy-adapter")
+    parser.add_argument("--model",      default="unsloth/llama-3.2-3b-instruct")
+    parser.add_argument("--epochs",     type=int,   default=3)
+    parser.add_argument("--rank",       type=int,   default=16)
+    parser.add_argument("--lr",         type=float, default=2e-4)
+    parser.add_argument("--hub-repo",   default=None,
+                        help="HuggingFace repo ID to push adapter after training, "
+                             "e.g. username/llama-3.2-3b-iam-policy")
     return parser.parse_args()
 
 
@@ -54,7 +59,8 @@ def train(args):
             per_device_train_batch_size=2,
             gradient_accumulation_steps=4,
             num_train_epochs=args.epochs,
-            learning_rate=2e-4,
+            learning_rate=args.lr,
+            warmup_steps=20,
             fp16=True,
             output_dir=args.output,
             logging_steps=10,
@@ -63,9 +69,16 @@ def train(args):
     )
 
     trainer.train()
-    model.save_pretrained("iam-policy-adapter")
-    tokenizer.save_pretrained("iam-policy-adapter")
-    print("Adapter saved to iam-policy-adapter/")
+    model.save_pretrained(args.adapter)
+    tokenizer.save_pretrained(args.adapter)
+    print(f"Adapter saved to {args.adapter}/")
+
+    if args.hub_repo:
+        from huggingface_hub import HfApi
+        HfApi().create_repo(args.hub_repo, repo_type="model", exist_ok=True)
+        model.push_to_hub(args.hub_repo)
+        tokenizer.push_to_hub(args.hub_repo)
+        print(f"Adapter pushed to https://huggingface.co/{args.hub_repo}")
 
 
 if __name__ == "__main__":
