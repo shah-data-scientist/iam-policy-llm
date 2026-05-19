@@ -1,0 +1,13 @@
+unsloth
+trl
+datasets
+peft
+accelerate
+bitsandbytes
+transformers
+torch
+evaluate
+rouge_score
+gradio
+ollama
+jupyterlab

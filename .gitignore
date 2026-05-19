@@ -1,0 +1,21 @@
+# model weights (too large for git)
+iam-policy-adapter/
+outputs/
+*.bin
+*.safetensors
+
+# data (push processed only if small enough)
+data/raw/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# jupyter checkpoints
+.ipynb_checkpoints/
+
+# env
+.env
