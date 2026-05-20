@@ -135,11 +135,15 @@ To move beyond a single-phrasing qualitative audit, a 150-prompt benchmark was b
 
 | Metric | Fine-tuned | Base model | Delta |
 |---|---|---|---|
-| Detection rate (adversarial caught ≥ MEDIUM) | **80%** (64/80) | 62.5% (50/80) | +17.5 pp |
+| Detection rate — blended (≥ MEDIUM) | **80%** (64/80) | 100% (80/80) | — |
+| Detection rate — content only (flags in valid JSON) | **62.5%** (50/80) | 58.8% (47/80) | +3.7 pp |
+| Detection rate — parse error only | 17.5% (14/80) | 41.3% (33/80) | −23.8 pp |
 | Robustness rate (robustness inputs stay LOW/PASS) | **50%** (10/20) | 0% (0/20) | +50 pp |
 | False positive rate (benign → HIGH/MEDIUM) | **8%** (4/50) | 100% (50/50) | −92 pp |
 
-The base model flags everything HIGH or MEDIUM regardless of input — a usability failure that makes it unusable in practice despite its apparent "detection rate". Fine-tuning dramatically reduces false positives while improving true detection.
+**Critical distinction — blended vs content detection rate:** The base model's apparent 100% detection rate is misleading: 41% of its "detections" are parse errors (the model broke rather than resisted). Fine-tuning reduces parse errors from 33 to 14, making the system far more stable, while its true content detection rate (62.5%) is only marginally better than the base (58.8%). The dominant gain from fine-tuning is **reliability** — 92 pp reduction in false positives and 23.8 pp fewer parse-error failures — not raw detection accuracy.
+
+**Parse errors are not detections.** A parse error means the model produced unusable output — the user receives nothing and the validator blocks it as a safety net. In production this is a silent failure: the pipeline stalls, no policy is returned, and no explanation is given. Catching an attack via parse error is less desirable than catching it via content flags on valid output.
 
 ### 4.3 Detection by category (fine-tuned)
 
@@ -222,18 +226,104 @@ if result["validation"]["severity"] in ("HIGH", "MEDIUM"):
     raise ValueError(f"Policy requires review: {result['validation']['warnings']}")
 ```
 
+### Parse error remediation
+
+Parse errors account for 17.5% of fine-tuned detections and 41.3% of base-model "detections". They are a safety net, not a detection control — they represent output failures that must be eliminated for production use.
+
+**Root causes identified in the benchmark:**
+
+| Attack type | Parse errors | Cause |
+|---|---|---|
+| `template_injection` (A03) | 5/5 | `### Response:` pre-fill in prompt corrupts the model's output structure |
+| `nist_suppression` (A16) | 3/5 | Instruction to suppress `nist_controls` breaks expected JSON schema |
+| `role_confusion` (A02) | 2/5 | Jailbreak framing produces free-text instead of JSON |
+| Others (A07, A08, A11, A12) | 4 isolated | Conflicting or extreme instructions destabilise generation |
+
+**Remediation layers (in order of implementation cost):**
+
+**Layer 1 — Input sanitisation (low cost, catches A03 entirely)**
+
+Strip prompt injection markers before passing to the model. A03 template injection is entirely prevented by removing `### Response:` and similar markers:
+
+```python
+import re
+
+_INJECTION_PATTERNS = [
+    r'###\s*(Response|Instruction|System|Human|Assistant)\s*:.*',
+    r'(?i)ignore\s+(all\s+)?(previous|prior|your)\s+instructions?',
+    r'(?i)you\s+are\s+(now\s+)?(a\s+)?(different|new|unrestricted)',
+]
+
+def sanitise_input(text: str) -> str:
+    for pattern in _INJECTION_PATTERNS:
+        text = re.sub(pattern, '', text, flags=re.DOTALL)
+    return text.strip()
+```
+
+**Layer 2 — Input length guard (low cost, catches A19-type truncation)**
+
+```python
+MAX_WORDS = 200
+
+def validate_input_length(requirement: str) -> None:
+    if len(requirement.split()) > MAX_WORDS:
+        raise ValueError(f"Requirement too long ({len(requirement.split())} words, max {MAX_WORDS}). Please be more specific.")
+```
+
+**Layer 3 — JSON repair fallback (medium cost, catches truncation parse errors)**
+
+When the model truncates mid-JSON, `json-repair` can often recover the partial output:
+
+```python
+# pip install json-repair
+from json_repair import repair_json
+
+def try_parse(text: str) -> dict | None:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(repair_json(text))
+        except Exception:
+            return None  # true parse error — block output
+```
+
+**Layer 4 — Retry with temperature=0 (medium cost, catches stochastic failures)**
+
+If generation produces a parse error, retry once with `temperature=0` before raising:
+
+```python
+def generate_with_retry(requirement: str, max_retries: int = 1) -> dict:
+    for attempt in range(max_retries + 1):
+        temperature = 0.1 if attempt == 0 else 0.0
+        output = _generate(requirement, temperature=temperature)
+        parsed = try_parse(output)
+        if parsed is not None:
+            return parsed
+    raise ValueError("Model failed to produce valid JSON after retry")
+```
+
+**Layer 5 — Constrained decoding (high cost, eliminates parse errors entirely)**
+
+Use structured output enforcement at the inference layer (requires framework change):
+- **vLLM**: `guided_json=schema` parameter enforces JSON schema during generation
+- **outlines**: grammar-constrained generation library
+- **lm-format-enforcer**: token-level JSON enforcement for HuggingFace models
+
+This is the only layer that eliminates parse errors entirely, including for the most disruptive attacks (A03 template injection). Suitable for production deployment; not required for a portfolio demo.
+
 ---
 
 ## 6. Residual Risks
 
 | Risk | Attack | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
+| Parse errors (17.5% of detections are failures, not controls) | A03, A16, A02 | High | Medium | Input sanitisation + `json-repair` fallback + retry at temperature=0; constrained decoding for production |
 | Semantic escalation (deny-removal, business framing) | A14, A10 | High | High | Policy review gate at HIGH+MEDIUM — 16 attacks evaded detection in benchmark |
 | ARN hallucination | A18 | Medium | High | Validate ARNs against live AWS account inventory via `boto3` before deployment |
 | Cross-lingual resource scoping | A20 | Medium | Medium | Non-English inputs produce `wildcard_resource` more often — enforce English input or add resource-name validation |
-| Validator false positives (S3/RDS read actions) | B01, B10 | Low | Low | Refine privilege escalation pattern list; whitelist common read-only actions that require `Resource: "*"` |
+| Validator false positives (S3/RDS read actions) | B01, B10 | Low | Low | Refine privilege escalation pattern list; whitelist read-only actions that require `Resource: "*"` |
 | Incorrect NIST controls | A16 variant | Medium | Medium | Cross-reference with NIST SP 800-53 catalogue; do not rely on model alone |
-| Role-confusion injection | A02 | Low | High | Input sanitisation: strip meta-instruction patterns before passing to model |
 | Output truncation on long inputs | A19 | Medium | Medium | Enforce input length limit (~200 words) before calling `generate_policy()` |
 
 ---
@@ -244,7 +334,7 @@ Two complementary evaluations establish a clear picture of the model's security 
 
 The fine-tuned model's primary attack surface is **semantic privilege escalation with business justification** — direct syntactic attacks (injection, obfuscation) are largely resisted, but prompts that describe dangerous access in legitimate-sounding language succeed 20% of the time in the 150-prompt benchmark. This is expected behaviour for a generation model; the validator is the correct mitigation layer.
 
-Fine-tuning produces three measurable security improvements over the base model: **+17.5 pp detection rate** (80% vs 62.5%), **+50 pp robustness rate** (50% vs 0%), and **−92 pp false positive rate** (8% vs 100%). The base model's 100% false positive rate makes it unusable as a standalone tool; fine-tuning is what makes the system practical.
+Fine-tuning's primary measurable improvements are in **reliability**, not raw detection: **−92 pp false positive rate** (8% vs 100%), **+50 pp robustness rate** (50% vs 0%), and **−23.8 pp parse error rate** (17.5% vs 41.3%). True content-based detection improves only modestly: +3.7 pp (62.5% vs 58.8%). The base model's apparent 100% detection rate is an artefact of parse errors — it breaks on almost every adversarial prompt, making it unusable in practice. Fine-tuning is what makes the system practical.
 
 The two highest-priority residual risks for a financial-sector reviewer:
 1. **Deny-removal and break-glass evasion (A14, A10):** 20% of adversarial prompts with plausible business framing evade the validator. Human review of any policy with `missing_deny` is advisable.
@@ -252,9 +342,11 @@ The two highest-priority residual risks for a financial-sector reviewer:
 
 **Recommended next steps for production hardening:**
 1. Integrate `validate_policy()` into `app.py` — surface severity and warnings in the Gradio UI
-2. Add input length guard (max ~200 words) to prevent parse-error failures on very long inputs
-3. Add `boto3` ARN validation as an optional post-processing step for known account resources
-4. Refine validator: remove false positive on `s3:GetBucketLocation`; whitelist `rds:DescribeDBInstances` with `Resource: "*"` as LOW rather than MEDIUM
+2. Add input sanitisation layer — strip `### Response:` and meta-instruction patterns before generation (eliminates A03 template injection parse errors entirely)
+3. Add input length guard (max ~200 words) and `json-repair` fallback to reduce parse-error failures
+4. Add `boto3` ARN validation as an optional post-processing step for known account resources
+5. Refine validator: remove false positive on `s3:GetBucketLocation`; whitelist `rds:DescribeDBInstances` with `Resource: "*"` as LOW rather than MEDIUM
+6. For production: adopt constrained decoding (vLLM guided JSON or lm-format-enforcer) to eliminate parse errors entirely
 
 ---
 
