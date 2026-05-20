@@ -39,10 +39,15 @@ Generate **draft** AWS IAM policies from plain-English access control requiremen
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Over-permissive policy generated | Medium | Evaluation suite flags over-provisioning |
-| Wildcard actions (*) in output | Low | Post-processing validation step |
+| Over-permissive policy generated | Medium | `policy_validator.py` flags wildcard actions and privilege escalation as HIGH severity |
+| Wildcard actions (*) in output | Low | `policy_validator.py` `wildcard_action` check — blocks HIGH severity outputs |
+| Privilege escalation via IAM/STS actions | Medium | `policy_validator.py` `privilege_escalation` check — flags iam:*, sts:*, PassRole |
+| Missing Condition blocks | Medium | `policy_validator.py` `missing_condition` check — MEDIUM severity warning |
+| ARN hallucination | Medium | Unmitigated — validate ARNs against AWS account inventory before deployment |
 | PII in prompt logged | Low | Inference runs locally or on private Colab session |
-| Model used without review | Medium | README and UI include mandatory disclaimer |
+| Model used without review | Medium | Mandatory disclaimer in UI; `policy_validator.py` severity rating surfaces review need |
+
+See [docs/red_team_report.md](docs/red_team_report.md) for the full adversarial evaluation covering 20 attacks across 4 categories.
 
 ## Evaluation
 
@@ -56,10 +61,22 @@ Evaluated on 51 held-out test examples. See [notebooks/03_evaluate.ipynb](notebo
 
 **Training details:** 451 examples, 3 epochs, 171 steps, final loss 0.617. Hardware: Google Colab T4 (16 GB), runtime ~8 minutes. Trainable parameters: 9.2M / 3.22B (0.28%).
 
+## Adversarial Evaluation
+
+20 adversarial prompts were tested across four attack categories: prompt injection, privilege escalation, policy manipulation, and compliance bypass. Key findings:
+
+- **Prompt injection resistance:** strong — instruction-tuning suppresses most override attempts
+- **Privilege escalation:** model fulfils what it is asked — over-permissive inputs yield over-permissive outputs; caught by `policy_validator.py`
+- **ARN hallucination:** unmitigated — cannot be detected by static validation alone
+
+Full methodology and findings: [docs/red_team_report.md](docs/red_team_report.md)
+Results data: [results/red_team_results.json](results/red_team_results.json)
+
 ## Ethical Considerations
 
 Fine-tuning on access control policy generation carries a dual-use risk: the same model could assist in crafting overly permissive policies. Mitigations applied:
 
-- Evaluation suite explicitly tests for least-privilege violations
-- Model card and demo UI include a human-review disclaimer
+- `src/policy_validator.py` detects and flags HIGH/MEDIUM severity outputs automatically
+- Red-teaming report documents attack surface and residual risks
+- Model card and demo UI include a mandatory human-review disclaimer
 - Model weights published with a responsible-use notice
